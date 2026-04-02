@@ -23,14 +23,14 @@ def sample_process(list_game_data):
 
 
 def reward_shaping(env_reward, env_obs):
-    score = env_obs["observation"]["env_info"]["score"]
+    score = float(env_obs["observation"]["env_info"].get("score", 0))
     terminated = env_obs["terminated"]
     truncated = env_obs["truncated"]
 
-    reward = float(env_reward) * 0.2 - 0.01
+    reward = -0.01
 
     if score > 0:
-        reward += float(score)
+        reward += score
 
     if terminated:
         reward += 150.0

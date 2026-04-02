@@ -14,6 +14,11 @@ import torch
 from torch.distributions import Categorical
 from kaiwudrl.interface.agent import BaseAgent
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 compatibility
+    import tomli as tomllib
+
 from agent_diy.algorithm.algorithm import Algorithm
 from agent_diy.conf.conf import Config
 from agent_diy.model.model import Model
@@ -28,6 +33,7 @@ class Agent(BaseAgent):
         self.action_size = Config.ACTION_SIZE
         self.obs_shape = Config.OBSERVATION_SHAPE
         self.device = torch.device(device if device else "cpu")
+        self.default_end = self._load_default_end()
 
         self.model = Model(self.obs_shape, self.action_size).to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=Config.LEARNING_RATE)
@@ -65,9 +71,7 @@ class Agent(BaseAgent):
         pos_x = float(hero_pos["x"])
         pos_z = float(hero_pos["z"])
 
-        end_pos = obs["game_info"]["end"]
-        end_x = float(end_pos["x"])
-        end_z = float(end_pos["z"])
+        end_x, end_z = self._extract_end_position(obs)
 
         feature = [
             pos_x / 63.0,
@@ -81,14 +85,15 @@ class Agent(BaseAgent):
 
         treasure_status = [0.0] * 10
         treasure_pos = [0.0] * 20
-        for organ in frame_state["organs"]:
+        for organ in frame_state.get("organs", []):
             if organ["sub_type"] != 1:
                 continue
             idx = int(organ["config_id"])
             if 0 <= idx < 10:
-                treasure_status[idx] = float(organ["status"])
-                treasure_pos[2 * idx] = float(organ["pos"]["x"]) / 63.0
-                treasure_pos[2 * idx + 1] = float(organ["pos"]["z"]) / 63.0
+                treasure_status[idx] = float(organ.get("status", 0))
+                organ_pos = organ.get("pos", {})
+                treasure_pos[2 * idx] = float(organ_pos.get("x", 0)) / 63.0
+                treasure_pos[2 * idx + 1] = float(organ_pos.get("z", 0)) / 63.0
 
         feature.extend(treasure_status)
         feature.extend(treasure_pos)
@@ -171,3 +176,28 @@ class Agent(BaseAgent):
             log_prob=float(log_prob.item()),
             value=float(value.squeeze(0).item()),
         )
+
+    def _extract_end_position(self, obs):
+        candidates = [
+            obs.get("game_info", {}).get("end"),
+            obs.get("end"),
+            obs.get("env_info", {}).get("end"),
+            obs.get("frame_state", {}).get("end"),
+        ]
+        for end_pos in candidates:
+            if isinstance(end_pos, dict) and "x" in end_pos and "z" in end_pos:
+                return float(end_pos["x"]), float(end_pos["z"])
+
+        return self.default_end
+
+    def _load_default_end(self):
+        try:
+            with open("agent_diy/conf/train_env_conf.toml", "rb") as file_obj:
+                config_data = tomllib.load(file_obj)
+            end_pos = config_data.get("env_conf", {}).get("end", [11, 55])
+            if isinstance(end_pos, list) and len(end_pos) >= 2:
+                return float(end_pos[0]), float(end_pos[1])
+        except Exception:
+            pass
+
+        return 11.0, 55.0
